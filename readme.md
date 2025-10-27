@@ -13,7 +13,7 @@
 * **Trivy** – Scanning dependencies and Docker images for vulnerabilities.
 * **Docker** – Containerization of applications.
 * **Kubernetes (K8s)** – Container orchestration and management platform.
-
+* **ArgoCD** – GitOps-based continuous deployment for Kubernetes
 ---
 
 | Language | Dependency File  |
@@ -138,6 +138,12 @@ sudo tar xf gitleaks.tar.gz -C /usr/local/bin gitleaks
 gitleaks version
 rm -rf gitleaks.tar.gz
 ```
+or 
+
+```bash
+sudo apt install gitleaks
+```
+
 
 ---
 
@@ -174,10 +180,6 @@ ls -l
 * **Pipeline Stage View**
 * **SonarQube Scanner for Jenkins**
 * **Docker Pipeline**
-* **Kubernetes CLI**
-* **Kubernetes**
-* **Kubernetes Credentials**
-* **Generic Webhook Trigger**
 ---
 
 ## 🛠️ Jenkins Configuration
@@ -228,13 +230,6 @@ docker
 sudo apt install docker.io
 sudo usermod -aG docker jenkins
 sudo systemctl restart docker  or  exit
-
-```
-```bash
-
-sudo  curl -SL https://github.com/docker/compose/releases/download/v2.40.1/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
-
-sudo chmod +x /usr/local/bin/docker-compose
 
 ```
 
@@ -318,6 +313,7 @@ volumes:
 ## 🧪 Jenkins Pipeline Script (Full DevSecOps Flow)
 
 ```groovy
+
 pipeline {
     agent any
 
@@ -325,133 +321,175 @@ pipeline {
         nodejs 'nodejs23'
     }
 
-   environment {
-       SCANNER_HOME = tool 'sonar-scanner'
-   }
-
+    environment {
+        SCANNER_HOME   = tool 'sonar-scanner'
+        IMAGE_TAG      = "1.0.${BUILD_NUMBER}"
+        FRONTEND_IMAGE = "yeshwanthgosi/frontend"
+        BACKEND_IMAGE  = "yeshwanthgosi/backend"
+        CD_REPO_URL    = "https://github.com/Gyeshwanth/Deploy-3Tier-GitOps-CD.git"
+      GIT_USER_NAME  = "Gyeshwanth"
+        GIT_REPO_NAME  = "Deploy-3Tier-GitOps-CD"
+	}
 
     stages {
         stage('git checkout') {
             steps {
-                git branch: 'main', credentialsId: 'gitcred', url: 'https://github.com/Gyeshwanth/devops-project.git'
+                git branch: 'main',
+                    credentialsId: 'git-cred',
+                    url: 'https://github.com/Gyeshwanth/Deploy-3Tier-GitOps-CI.git'
             }
         }
-        
-         stage('frontend compile') {
+
+        stage('frontend compile') {
             steps {
-                 dir('client') {
-                      sh 'find . -name "*.js" -exec node --check {} +'
-                 }
+                dir('client') {
+                    sh 'find . -name "*.js" -exec node --check {} +'
+                }
             }
         }
-        
+
         stage('backend compile') {
             steps {
-                 dir('api') {
-                      sh 'find . -name "*.js" -exec node --check {} +'
-                 }
+                dir('api') {
+                    sh 'find . -name "*.js" -exec node --check {} +'
+                }
             }
         }
-        
+
         stage('git leaks') {
             steps {
                 sh 'gitleaks detect --source ./client --exit-code 1'
-                sh 'gitleaks detect --source ./api --exit-code 1' 
+                sh 'gitleaks detect --source ./api --exit-code 1'
             }
         }
-        
-         stage('SonarQube Analysis') {
+
+        stage('SonarQube Analysis') {
             steps {
-               withSonarQubeEnv('sonar') {
-          sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=NodeJS-Project \
-                            -Dsonar.projectKey=NodeJS-Project '''
-             }
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=NodeJS-Project \
+                        -Dsonar.projectKey=NodeJS-Project '''
+                }
             }
         }
-        
-         stage('Quality Gate Check') {
+
+        stage('Quality Gate Check') {
             steps {
-             timeout(time: 1, unit: 'HOURS') {
-               waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-             }
-                  }
-         }
-        
-        
-         stage('Trivy FS Scan') {
+                timeout(time: 1, unit: 'HOURS') {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                }
+            }
+        }
+
+        stage('Trivy FS Scan') {
             steps {
                 sh 'trivy fs --format table -o fs-report.html .'
             }
         }
-        
-         stage('Build-Tag & Push Backend Docker Image') {
-            steps {
-              script {
-        withDockerRegistry(credentialsId: 'docker-cred') {
-          
-           dir('api') {
-               sh 'docker build -t yeshwanthgosi/backend:latest .'
-                sh 'trivy image --format table -o backend-image-report.html yeshwanthgosi/backend:latest '
-               sh 'docker push yeshwanthgosi/backend:latest'
-           }
-              }
-            }
-        }
-    }
-         stage('Build-Tag & Push Frontend Docker Image') {
-            steps {
-              script {
-        withDockerRegistry(credentialsId: 'docker-cred') {
-          
-           dir('client') {
-               sh 'docker build -t yeshwanthgosi/frontend:latest .'
-               sh 'trivy image --format table -o frontend-image-report.html yeshwanthgosi/frontend:latest '
-               sh 'docker push yeshwanthgosi/frontend:latest'
-           }
-              }
-            }
-        }
-    }
-      
-      
-       stage('k8s-deploy') {
-        steps {
-             script {
-                  
-    withKubeConfig(caCertificate: '', clusterName: ' yesh-cluster', contextName: '', credentialsId: 'k8s-token', namespace: 'prod', restrictKubeConfigAccess: false, serverUrl: 'https://7CEBD932F89B3BD349EDE73AD44A8264.sk1.ap-south-1.eks.amazonaws.com') {
-                        sh 'kubectl apply -f k8s-prod/sc.yaml'
-                        sleep 20
-                        sh 'kubectl apply -f k8s-prod/mysql.yaml -n prod'
-                        sh 'kubectl apply -f k8s-prod/backend.yaml -n prod'
-                        sh 'kubectl apply -f k8s-prod/frontend.yaml -n prod'
-                        sh 'kubectl apply -f k8s-prod/ci.yaml'
-                        sh 'kubectl apply -f k8s-prod/ingress.yaml -n prod'
-                        sleep 30
-        }
-             }
-        }
-    }
-    
-   
-  stage('verify-k8s-deploy') {
-        steps {
-             script {
-                  
-    withKubeConfig(caCertificate: '', clusterName: ' yesh-cluster', contextName: '', credentialsId: 'k8s-token', namespace: 'prod', restrictKubeConfigAccess: false, serverUrl: 'https://7CEBD932F89B3BD349EDE73AD44A8264.sk1.ap-south-1.eks.amazonaws.com') {
-                       sh 'kubectl get pods -n prod'
-                        sleep 20
-                         sh 'kubectl get ingress -n prod'
+
        
+        stage('Build, Tag & Push Backend Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        dir('api') {
+                            sh """
+                                echo " Building backend image..."
+                                docker build -t ${BACKEND_IMAGE}:latest -t ${BACKEND_IMAGE}:${IMAGE_TAG} .
+                                echo " Scanning image with Trivy..."
+                                trivy image --format table -o backend-image-report.html ${BACKEND_IMAGE}:${IMAGE_TAG} || true
+                                echo " Pushing images..."
+                                docker push ${BACKEND_IMAGE}:latest
+                                docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                            """
+                        }
+                    }
+                }
+            }
         }
-             }
+
+        stage('Build, Tag & Push Frontend Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        dir('client') {
+                            sh """
+                                echo " Building frontend image..."
+                                docker build -t ${FRONTEND_IMAGE}:latest -t ${FRONTEND_IMAGE}:${IMAGE_TAG} .
+                                echo " Scanning image with Trivy..."
+                                trivy image --format table -o frontend-image-report.html ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
+                                echo " Pushing images..."
+                                docker push ${FRONTEND_IMAGE}:latest
+                                docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                            """
+                        }
+                    }
+                }
+            }
         }
-    }
- 
 
+       stage('Update CD Repo with New Image Tags') {
+    steps {
+        script {
+            withCredentials([usernamePassword(credentialsId: 'git-cred', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                sh '''
+                    echo "🌀 Cloning CD repo..."
+                    rm -rf cd
+                    git clone https://$GIT_USERNAME:$GIT_PASSWORD@github.com/$GIT_USER_NAME/$GIT_REPO_NAME.git cd
+                    cd cd
+                    git checkout main || git checkout -b main
 
-        
+                    echo " Installing yq..."
+                    curl -sL https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -o yq
+                    chmod +x yq
+                    mv yq /tmp/yq
+                    export PATH=$PATH:/tmp
+
+                    echo " Updating image tags..."
+                    echo "📝 Updating backend image tag..."
+                    yq -i '
+                      (. | select(.kind=="Deployment")
+                         | .spec.template.spec.containers[]
+                         | select(.name=="backend")
+                         | .image)
+                      = "yeshwanthgosi/backend:" + strenv(IMAGE_TAG)
+                    ' k8s-prod/backend.yaml
+
+                    yq -i '
+                      (. | select(.kind=="Deployment")
+                         | .spec.template.spec.containers[]
+                         | select(.name=="frontend")
+                         | .image)
+                      = "yeshwanthgosi/frontend:" + strenv(IMAGE_TAG)
+                    ' k8s-prod/frontend.yaml
+
+                    git config user.email "yeshwanth@example.com"
+                    git config user.name "yeshwanth"
+                    git add -A
+                    git commit -m "Update image tags to ${IMAGE_TAG}" || echo "No changes to commit."
+                    git pull --rebase origin main || true
+
+                    echo " Pushing updated files..."
+                    git push https://$GIT_USERNAME:$GIT_PASSWORD@github.com/$GIT_USER_NAME/$GIT_REPO_NAME.git HEAD:main || echo "⚠️ Push failed or no new changes."
+                '''
+            }
+        }
     }
 }
+
+
+    }
+
+    post {
+        success {
+            echo "✅ CI + CD pipeline completed successfully. Images updated to tag: ${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ Pipeline failed. Check Jenkins logs for details."
+        }
+    }
+}
+
 
 ```
 
@@ -481,7 +519,7 @@ Open in Jenkins or browser to review vulnerabilities.
 
 # EKS Master Node Setup for Jenkins Integration
 
-This document describes how to set up an EC2 instance as an EKS Master Node to run `kubectl` commands and integrate with Jenkins pipelines for Kubernetes automation.
+This document outlines the steps to set up an EC2 instance as an EKS Master Node to run `kubectl` commands and integrate with Jenkins pipelines for Kubernetes automation.
 
 ---
 
@@ -510,131 +548,104 @@ ssh -i your-key.pem ubuntu@<EC2_PUBLIC_IP>
 
 https://github.com/Gyeshwanth/devops-project/blob/main/EKS-Setup.md
 
-**Plugins Required for Jenkins:**
 
-* Kubernetes CLI
-* Kubernetes
-* Kubernetes Credentials
 ---
 
-## 6. Apply Kubernetes RBAC YAMLs for Jenkins Automation
+# ArgoCD Setup
 
-Reference RBAC YAML files: [RBAC YAMLs](https://github.com/Gyeshwanth/Terraform-devops-project/blob/main/RBAC/rbac.md)
-
-**Steps:**
-
-1. Create namespace `prod`.
-2. Create secret YAML `secret.yaml`:
-
-```yaml
-apiVersion: v1
-kind: Secret
-type: kubernetes.io/service-account-token
-metadata:
-  name: mysecretname
-  annotations:
-    kubernetes.io/service-account.name: jenkins
-```
-
-3. Apply secret:
+### Install ArgoCD on EKS Cluster
 
 ```bash
-kubectl apply -f secret.yaml -n prod
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 ```
 
-4. Retrieve token:
+**Verify Installation:**
 
 ```bash
-kubectl describe secret mysecretname -n prod
+kubectl get all -n argocd
 ```
 
-*Copy token → Jenkins → Manage → Credentials → Secret Text → ID: `k8s-token`*
+---
+
+### Expose ArgoCD
+
+By default, ArgoCD server is internal(CluserIP) . Expose via LoadBalancer:
+
+```bash
+kubectl edit svc argocd-server -n argocd
+```
+
+Change service type → `LoadBalancer`
+
+**Access UI:** `http://<PUBLIC_IP:NodePort>`
 
 ---
 
-## 7. Configure Jenkins for EKS
+### Get ArgoCD Admin Password
 
-1. Copy the **EKS cluster endpoint** from AWS → EKS → Cluster.
-2. Install `kubectl` on Jenkins EC2 if not installed.
-3. Configure Jenkins pipeline to use `k8s-token` and cluster endpoint for deploying resources.
+```bash
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d; echo
+```
 
----
+Login → Username: `admin`
 
-This completes the setup of an EC2 instance as the EKS Master Node for running `kubectl` commands and integrating Kubernetes automation with Jenkins.
-
----
-
-
-# 📘 Jenkins Webhook & CD Setup Guide
-
-## Automation with Webhook
-
-You can automate your Jenkins pipelines using either the **GitHub plugin** or **Generic Webhook Trigger**.
-
-* **Generic Webhook Trigger**: Flexible, supports multiple integration sources with Jenkins automation.
-* **GitHub Plugin**: Only supports GitHub repositories.
+Update password → via ArgoCD UI under **User Info**
 
 ---
 
-## Step 1: Install Plugin Generic Webhook Trigger
+### Connect GitHub Repo to ArgoCD
 
-1. Go to your Jenkins **Pipeline** → **Current Build** → **Configure**.
-2. Under **Triggers**, select **Generic Webhook Trigger**.
+1. Go to **Settings → Repositories → Connect Repo**
+2. Choose connection type **HTTPS**
+3. Fill:
 
-## Step 2: Configure Webhook Parameters
+   * Repository URL
+   * Username
+   * Password or GitHub Token
 
-1. In the **Post Parameter** section, add:
+---
 
-   * **Variable**: `ref`
-   * **Expression (JSONPath)**: `$.ref`
+### Create Application in ArgoCD
 
-## Step 3: Token Setup
+* Provide repo URL
+* Specify path (e.g., `k8s-prod/`)
+* Set **Cluster URL** and **Namespace (prod)**
+* Enable checkboxes:
 
-1. Provide any string as the **token**.
-2. You can make the token hidden by selecting the **Credentials** section and specifying the token.
+  * Auto-create namespace
+  * Auto-sync
 
-## Step 4: Optional Filter
+---
 
-1. In the **Optional Filter** section, configure:
+### Setup GitHub Webhook for Auto-Sync
 
-   * **Expression**: `refs/heads/branch_name`
-   * **Text**: `$ref`
-2. Apply and save.
-3. Copy the webhook URL:
+```bash
+SECRET="yeshwanth7896"
+kubectl -n argocd patch secret argocd-secret \
+  --type merge \
+  -p "{\"stringData\": {\"webhook.github.secret\": \"${SECRET}\"}}"
+```
 
-   ```
-   http://jenkins_url/generic-webhook-trigger/invoke?token=yourtoken
-   ```
+Verify webhook:
 
-## Step 5: Configure GitHub Webhook
+```bash
+kubectl -n argocd get secret argocd-secret -o yaml | grep webhook.github.secret
+```
+
+
+----
+##  Configure GitHub Webhook
 
 1. Go to **GitHub Repository** → **Settings** → **Webhooks**.
 2. Click **Add webhook**.
-3. Set **Payload URL** to the copied Jenkins URL.
+3. Set **Payload URL** <ARGOCD_URL>/api/webhook
 4. Set **Content type** to `application/json`.
-5. Select the specific events (e.g., **Push**) to trigger the pipeline.
-6. Verify webhook by checking **Recent Deliveries**.
+5.  **Secret:** yeshwanth7896
+6. Select the specific events (e.g., **Push**) to trigger the pipeline.
+7. Verify webhook by checking **Recent Deliveries**.
 
----
-
-## Continuous Delivery vs Continuous Deployment
-
-* **Continuous Delivery (CD)**: Requires manual permission to deploy.
-* **Continuous Deployment (CD)**: Deployment happens automatically without manual approval.
-
-### To enable manual approval in pipeline:
-
-```groovy
-stage('Manual Approval for Production') {
-    steps {
-        timeout(time: 1, unit: 'HOURS') {
-            input message: 'Approve deployment to PRODUCTION?', ok: 'Deploy'
-        }
-    }
-}
-```
-
-* If not approved within 1 hour, deployment triggers automatically.
+This enables ArgoCD to **auto-sync** whenever a GitHub commit occurs.
 
 ---
 
@@ -687,401 +698,42 @@ kubectl get certificate -n prod
 kubectl describe certificate <secretName> -n prod
 kubectl describe certificate yeshwanth-co-tls -n prod
 ```
+---
+
+## 🧾 Troubleshoot Related Certificate In  Kubernetes (TLS)
+
+If your certificate is not created or has issues(After sometime also still Ready False), you can manually delete it to trigger automatic recreation by **cert-manager**:
+
+```bash
+kubectl delete certificate yeshwanth-co-tls -n prod
+```
+
+After deletion, wait a few minutes — cert-manager will reissue it automatically.
+
+Verify the status:
+
+```bash
+kubectl get certificate yeshwanth-co-tls -n prod
+```
+
+If `READY` is `True`, your certificate is successfully recreated.
+
+---
+
 
 * Verify HTTPS access in browser for secure endpoints.
 
----
-
-This setup ensures:
-
-* Automated Jenkins pipeline triggers via GitHub or other sources.
-* Controlled or automatic deployments with Continuous Delivery/Deployment.
-* Secure, DNS-mapped endpoints with SSL/TLS verification.
-
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/535c14fd-bbdf-4a51-b150-308948707566" />
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/972b9a17-3ecd-48b3-8988-90baf9b79a06" />
-
-
-# EKS Monitoring Setup with Prometheus and Grafana
-
-This guide provides steps to set up a complete monitoring stack on EKS EC2 instances using Prometheus, Grafana, Node Exporter, Kube-State-Metrics, and Alertmanager.
 
 ---
+## 🔒 Summary
 
-##
+* **CI** handled by Jenkins
+* **CD** handled by ArgoCD (GitOps model)
+* **Auto-sync** triggered via GitHub webhook
+* **Secure & automated** deployment pipeline
 
-* EC2 instances running  (EKS cluster)
-* Kubectl configured to access the cluster
-*  download Helm and chart repositories
+<img width="1920" height="1080" alt="Screenshot (261)" src="https://github.com/user-attachments/assets/c83bb112-aceb-4b0d-bd33-c131bc0079f8" />
 
----
-
-## 1. Install Helm
-
-Helm is a package manager for Kubernetes that simplifies application deployment.
-
-```bash
-sudo apt update && sudo apt upgrade -y
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-```
-
-Verify installation:
-
-```bash
-helm version
-```
-
----
-
-## 2. Add Prometheus Helm repository
-
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-```
-
----
-
-## 3. Create a directory for monitoring configs
-
-```bash
-mkdir monitoring && cd monitoring
-```
-
-Create a custom `values.yaml`:
-
-```yaml
-alertmanager:
-  enabled: false
-prometheus:
-  prometheusSpec:
-    service:
-      type: LoadBalancer
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          storageClassName: ebs-sc
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 5Gi
-grafana:
-  enabled: true
-  service:
-    type: LoadBalancer
-  adminUser: admin
-  adminPassword: admin123
-nodeExporter:
-  service:
-    type: LoadBalancer
-kubeStateMetrics:
-  enabled: true
-  service:
-    type: LoadBalancer
-additionalScrapeConfigs:
-  - job_name: node-exporter
-    static_configs:
-      - targets:
-          - node-exporter:9100
-  - job_name: kube-state-metrics
-    static_configs:
-      - targets:
-          - kube-state-metrics:8080
-```
-
-> **Note:** This configuration exposes Grafana, Prometheus, Node Exporter, and Kube-State-Metrics via LoadBalancer for external access and uses EBS volumes for persistence.
-
----
-
-## 4. Deploy the monitoring stack
-
-```bash
-helm upgrade --install monitoring prometheus-community/kube-prometheus-stack -f values.yaml -n monitoring --create-namespace
-```
-
-Verify deployment:
-
-```bash
-kubectl get all -n monitoring
-```
-
----
-
-## 5. Patch services for LoadBalancer access (if needed)
-
-```bash
-kubectl patch svc monitoring-kube-prometheus-prometheus -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
-kubectl patch svc monitoring-kube-state-metrics -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
-kubectl patch svc monitoring-prometheus-node-exporter -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
-```
-
-> This ensures Prometheus, Node Exporter, and Kube-State-Metrics are accessible externally.
-
----
-
-## 6. Components Installed and Their Purpose
-
-| Component                       | Purpose                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------- |
-| **Prometheus**                  | Scrapes cluster and node metrics; stores time-series data                             |
-| **Grafana**                     | Preconfigured dashboards for Kubernetes, Nodes, Pods; visualization layer             |
-| **Node Exporter**               | Metrics for CPU, Memory, Disk, Network per node                                       |
-| **Kube-State-Metrics**          | Metrics for cluster object health (Pods, Deployments, PVCs, Jobs)                     |
-| **Alertmanager**                | Preconfigured alert rules for common cluster issues (disabled in current values.yaml) |
-| **Custom Resource Definitions** | ServiceMonitors and PrometheusRules for dynamic metric discovery and alerting         |
-| **RBAC & ServiceAccounts**      | Proper permissions for all components to access metrics and resources                 |
-
----
-
-## 7. Current Configuration Summary (Based on `values.yaml`)
-
-* **Alertmanager:** Disabled → no alerts will be sent
-* **Prometheus:** LoadBalancer service, 5Gi EBS storage
-* **Grafana:** LoadBalancer service, admin credentials set to `admin/admin123`
-* **Node Exporter:** LoadBalancer service (exposed externally, typically should be ClusterIP)
-* **Kube-State-Metrics:** LoadBalancer service (exposed externally, typically should be ClusterIP)
-* **Additional Scrape Configs:** Node Exporter and Kube-State-Metrics manually added (redundant; ServiceMonitors handle this automatically)
-
-> ⚠️ **Note:** Exposing Node Exporter and Kube-State-Metrics externally is generally not recommended in production; internal ClusterIP is safer.
-
----
-
-## 8. Next Steps / Recommendations
-
-* Enable **Alertmanager** for production alerting.
-* Use **Kubernetes Secrets** for Grafana credentials instead of hardcoding.
-* Consider keeping **Node Exporter and Kube-State-Metrics as ClusterIP** and rely on Prometheus for scraping internally.
-* Import official Grafana dashboards for Kubernetes, Node Exporter, and Prometheus.
-* Add ServiceMonitors for your application and Jenkins to monitor custom metrics.
-
----
-
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/77f1251e-98fe-4394-b6a2-cf5dc956ab61" />
-
--------------
-
-# Notification with Slack
-
-## Create Slack Account
-
-1. Go to Slack and create an account.
-2. Click **Create a workspace**.
-3. Enter a **workspace name**, click **Next**, and skip the trial/free steps.
-
----
-
-## Complete Jenkins-Slack Integration via Webhook
-
-### **PART 1: Create Slack App and Webhook URL**
-
-#### Step 1: Create Slack App
-
-1. Navigate to [https://api.slack.com/apps](https://api.slack.com/apps)
-2. Click **Create New App**
-3. Choose **From scratch**
-4. Fill in the following details:
-
-   * **App Name:** any name of your choice
-   * **Workspace:** your workspace name
-5. Click **Create App**
-
-#### Step 2: Enable Webhooks
-
-1. In the left sidebar, click **Incoming Webhooks**
-2. Toggle **Activate Incoming Webhooks** to enable
-
-#### Step 3: Add Webhook to a Channel
-
-1. Scroll down and click **Add New Webhook to Workspace**
-2. Select a channel, e.g., `#general`
-3. Click **Allow**
-4. Copy the generated Webhook URL (example below):
-
-   ```
-   https://hooks.slack.com/services/T0XXXX/B0YYYY/ZZZZZ
-   ```
-
----
-
-### **PART 2: OAuth Scopes Required (MANDATORY)**
-
-If you plan to use bot integration via OAuth token (not just webhooks), add the following scopes:
-
-| OAuth Scope       | Description                                 |
-| ----------------- | ------------------------------------------- |
-| chat:write        | Send messages as the bot                    |
-| chat:write.public | Send messages to public channels not joined |
-| channels:read     | Read public channels                        |
-| groups:read       | Read private channels                       |
-| users:read        | Read user info (optional for mentions)      |
-
-> These are not all required for webhook-only use but essential for token-based plugins.
-
-To add:
-
-* Go to **OAuth & Permissions** → Scroll to **Scopes**
-* Click **Add an OAuth Scope** → Add all scopes above
-* Return to the top and click **Reinstall to Workspace**
-
----
-
-### **PART 3: Configure Jenkins**
-
-1. Install **Slack Notification Plugin** in Jenkins.
-
-2. Go to **Jenkins > Credentials**:
-
-   * Add both **Webhook URL** and **OAuth token** as separate credentials.
-   * For OAuth token → choose **Secret Text**, ID = `slack-token`
-   * For Webhook URL → choose **Secret Text**, ID = `slack-webhook`
-
-3. Go to **Jenkins > Manage Jenkins > System**:
-
-   * Under **Slack**, configure:
-
-     * Workspace Name
-     * Slack Token Credential ID = `slack-token`
-     * Channel Name (e.g., `#general`)
-     * Check **Custom Slack Bot User**
-   * Click **Test Connection** and verify Slack response.
-
----
-
-### **PART 4: Jenkinsfile Configuration**
-
-Below is a fully working Jenkinsfile for Slack notifications:
-
-```groovy
-pipeline {
-    agent any
-
-    environment {
-        PROJECT_NAME = '🧰 My-App'
-        ENVIRONMENT = '🚀 Production'
-    }
-
-    stages {
-        stage('Compile') {
-            steps {
-                echo "🏗️ Compiling..."
-            }
-        }
-        stage('Test') {
-            steps {
-                echo "🧪 Running tests..."
-            }
-        }
-        stage('Build') {
-            steps {
-                echo "🧪 Building..."
-            }
-        }
-        stage('Security') {
-            steps {
-                echo "🧪 Security..."
-            }
-        }
-        stage('Deploy') {
-            steps {
-                echo "🚀 Deploying..."
-            }
-        }
-    }
-
-    post {
-        success {
-            withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_URL')]) {
-                script {
-                    def message = """{
-                        \"text\": \"*✅ ${PROJECT_NAME} Build Successful!*\",
-                        \"attachments\": [
-                            {
-                                \"color\": \"#36a64f\",
-                                \"fields\": [
-                                    { \"title\": \"Job\", \"value\": \"${env.JOB_NAME}\", \"short\": true },
-                                    { \"title\": \"Build\", \"value\": \"#${env.BUILD_NUMBER}\", \"short\": true },
-                                    { \"title\": \"Environment\", \"value\": \"${ENVIRONMENT}\", \"short\": true }
-                                ],
-                                \"footer\": \"Jenkins CI\",
-                                \"footer_icon\": \"https://www.jenkins.io/images/logos/jenkins/jenkins.png\",
-                                \"ts\": ${System.currentTimeMillis() / 1000},
-                                \"actions\": [
-                                    {
-                                        \"type\": \"button\",
-                                        \"text\": \"View Build\",
-                                        \"url\": \"${env.BUILD_URL}\",
-                                        \"style\": \"primary\"
-                                    }
-                                ]
-                            }
-                        ]
-                    }"""
-                    sh """curl -X POST -H 'Content-type: application/json' --data '${message}' $SLACK_URL"""
-                }
-            }
-        }
-
-        failure {
-            withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_URL')]) {
-                script {
-                    def message = """{
-                        \"text\": \"<!here> *❌ ${PROJECT_NAME} Build Failed!*\",
-                        \"attachments\": [
-                            {
-                                \"color\": \"#FF0000\",
-                                \"fields\": [
-                                    { \"title\": \"Job\", \"value\": \"${env.JOB_NAME}\", \"short\": true },
-                                    { \"title\": \"Build\", \"value\": \"#${env.BUILD_NUMBER}\", \"short\": true },
-                                    { \"title\": \"Environment\", \"value\": \"${ENVIRONMENT}\", \"short\": true }
-                                ],
-                                \"footer\": \"Jenkins CI\",
-                                \"footer_icon\": \"https://www.jenkins.io/images/logos/jenkins/jenkins.png\",
-                                \"ts\": ${System.currentTimeMillis() / 1000},
-                                \"actions\": [
-                                    {
-                                        \"type\": \"button\",
-                                        \"text\": \"View Build Logs\",
-                                        \"url\": \"${env.BUILD_URL}\",
-                                        \"style\": \"danger\"
-                                    }
-                                ]
-                            }
-                        ]
-                    }"""
-                    sh """curl -X POST -H 'Content-type: application/json' --data '${message}' $SLACK_URL"""
-                }
-            }
-        }
-
-        always {
-            echo "🎯 Post-build notification sent"
-        }
-    }
-}
-```
-
----
-
-### **PART 5: Run and Verify**
-
-#### Step 1: Trigger a Jenkins Build
-
-* Run your pipeline manually or via Git webhook.
-
-#### Step 2: Verify Slack Notification
-
-* Check your Slack channel to see messages:
-
-  * ✅ Build Passed
-  * ❌ Build Failed
-
-> Congratulations! You’ve successfully configured Jenkins to send Slack build notifications 🚀
-
-<img width="1920" height="1080" alt="Screenshot (259)" src="https://github.com/user-attachments/assets/6f64b8c2-4334-470f-aa6c-c0912ef8fd26" />
-
-
-
-
+<img width="1920" height="1080" alt="Screenshot (262)" src="https://github.com/user-attachments/assets/63373c30-741e-422e-b332-834725610b97" />
 
 
