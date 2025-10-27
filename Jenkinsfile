@@ -17,7 +17,7 @@ pipeline {
         stage('git checkout') {
             steps {
                 git branch: 'main',
-                    credentialsId: 'gitcred',
+                    credentialsId: 'git-cred',
                     url: 'https://github.com/Gyeshwanth/Deploy-3Tier-GitOps-CI.git'
             }
         }
@@ -113,7 +113,7 @@ pipeline {
         stage('Update CD Repo with New Image Tags') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'gitcred', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
+                    withCredentials([usernamePassword(credentialsId: 'git-cred', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
                         sh """
                             echo " Cloning CD repo..."
                             rm -rf cd
