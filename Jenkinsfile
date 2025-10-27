@@ -118,7 +118,7 @@ pipeline {
         script {
             withCredentials([usernamePassword(credentialsId: 'git-cred', usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
                 sh '''
-                    echo " Cloning CD repo..."
+                    echo "🌀 Cloning CD repo..."
                     rm -rf cd
                     git clone https://$GIT_USERNAME:$GIT_PASSWORD@github.com/$GIT_USER_NAME/$GIT_REPO_NAME.git cd
                     cd cd
@@ -131,18 +131,21 @@ pipeline {
                     export PATH=$PATH:/tmp
 
                     echo " Updating image tags..."
+                    echo "📝 Updating backend image tag..."
                     yq -i '
                       (. | select(.kind=="Deployment")
-                       | .spec.template.spec.containers[]
-                       | select(.name=="backend")
-                       | .image) = "${BACKEND_IMAGE}:${IMAGE_TAG}"
+                         | .spec.template.spec.containers[]
+                         | select(.name=="backend")
+                         | .image)
+                      = "yeshwanthgosi/backend:" + strenv(IMAGE_TAG)
                     ' k8s-prod/backend.yaml
 
                     yq -i '
                       (. | select(.kind=="Deployment")
-                       | .spec.template.spec.containers[]
-                       | select(.name=="frontend")
-                       | .image) = "${FRONTEND_IMAGE}:${IMAGE_TAG}"
+                         | .spec.template.spec.containers[]
+                         | select(.name=="frontend")
+                         | .image)
+                      = "yeshwanthgosi/frontend:" + strenv(IMAGE_TAG)
                     ' k8s-prod/frontend.yaml
 
                     git config user.email "yeshwanth@example.com"
